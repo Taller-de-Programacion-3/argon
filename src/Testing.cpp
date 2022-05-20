@@ -3,75 +3,84 @@
 /******************************************************/
 
 #include "Particle.h"
-#line 1 "/Users/pino/Desktop/ArgonProject/Testing/src/Testing.ino"
-/*--
+#line 1 "/private/var/git/argon/src/Testing.ino"
+// Variables
 
-We've heavily commented this code for you. If you're a pro, feel free to ignore it.
-
-Comments start with two slashes or are blocked off by a slash and a star.
-You can read them, but your device can't.
-It's like a secret message just for you.
-
-Every program based on Wiring (programming language used by Arduino, and Particle devices) has two essential parts:
-setup - runs once at the beginning of your program
-loop - runs continuously over and over
-
-You'll see how we use these in a second. 
-
-This program will blink an led on and off every second.
-It blinks the D7 LED on your Particle device. If you have an LED wired to D0, it will blink that LED as well.
-
--------------*/
-
-
-// First, we're going to make some variables.
-// This is our "shorthand" that we'll use throughout the program:
+#include <stdio.h>
 
 void setup();
+void heartBeatLight();
 void loop();
-#line 24 "/Users/pino/Desktop/ArgonProject/Testing/src/Testing.ino"
-int led1 = A0; // Instead of writing D0 over and over again, we'll write led1
-// You'll need to wire an LED to this one to see it blink.
+#line 5 "/private/var/git/argon/src/Testing.ino"
+SerialLogHandler logHandler;
+TCPClient client;
 
-int led2 = A1; // Instead of writing D7 over and over again, we'll write led2
-int led3 = A2; // Instead of writing D0 over and over again, we'll write led1
-// This one is the little blue LED on your board. On the Photon it is next to D7, and on the Core it is next to the USB jack.
+const char* BACKEND_URL = "taller3-backend.herokuapp.com";
+const char* TASKS_ENDPOINT = "/tasks/argon";
+const int BACKEND_PORT = 80;
 
-// Having declared these variables, let's move on to the setup function.
-// The setup function is a standard part of any microcontroller program.
-// It runs only once when the device boots up or is reset.
+char buf[150];
 
 void setup() {
+  char headerbuf[50];
 
-  // We are going to tell our device that D0 and D7 (which we named led1 and led2 respectively) are going to be output
-  // (That means that we will be sending voltage to them, rather than monitoring voltage that comes from them)
+  pinMode(A0, OUTPUT);
+  
+  if (client.connect(BACKEND_URL, BACKEND_PORT)) {
+    Log.info("Connected to: %s", BACKEND_URL);
 
-  // It's important you do this here, inside the setup() function rather than outside it or in the loop function.
+    snprintf(headerbuf, sizeof headerbuf, "GET %s HTTP/1.1", TASKS_ENDPOINT);
+    client.println(headerbuf);
 
-  pinMode(led1, OUTPUT);
-  pinMode(led2, OUTPUT);
+    snprintf(headerbuf, sizeof headerbuf, "Host: %s", BACKEND_URL);
+    client.println(headerbuf);
 
-  digitalWrite(led3, HIGH);
+    client.println("Content-Length: 0");
+    client.println();
+
+  } else {
+    Log.info("Failed to connect: %s", BACKEND_URL);
+  }
 }
 
-// Next we have the loop function, the other essential part of a microcontroller program.
-// This routine gets repeated over and over, as quickly as possible and as many times as possible, after the setup function is called.
-// Note: Code that blocks for too long (like more than 5 seconds), can make weird things happen (like dropping the network connection).  The built-in delay function shown below safely interleaves required background activity, so arbitrarily long delays can safely be done if you need them.
+void heartBeatLight() {
+  digitalWrite(A0, HIGH);
+
+  delay(100);
+
+  digitalWrite(A0, LOW);
+
+  delay(100);
+}
 
 void loop() {
-  // To blink the LED, first we'll turn it on...
-  digitalWrite(led1, HIGH);
-  digitalWrite(led2, HIGH);
+  if (client.available()) {
 
-  // We'll leave it on for 1 second...
-  delay(1000);
+    uint8_t c = 'a';
+    char buf[100];
 
-  // Then we'll turn it off...
-  digitalWrite(led1, LOW);
-  digitalWrite(led2, LOW);
+    // TODO. check for Content-Length header.
+    client.read(&c, 1); 
+    Log.info("Read %s", c);
 
-  // Wait 1 second...
-  delay(1000);
+    if (c == 13) {
+      client.read(&c, 1); 
+      if (c == 10) {
+        client.read(&c, 1); 
+        if (c == 13) {
+          client.read(&c, 1); 
+          if (c == 10) {
+            client.read((uint8_t*) buf, 99);
+            Log.info("Got buffer with %s", buf);
+          }
+        }
+      }
+    }
+  }
+  
+  if (!client.connected()) {
+    client.stop();
+  }
 
-  // And repeat!
+  heartBeatLight();
 }
