@@ -1,6 +1,4 @@
-# Testing
-
-A Particle project named Testing
+# Argon device source code
 
 ## Welcome to your project!
 
