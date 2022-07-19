@@ -1,19 +1,27 @@
 #include <stdio.h>
 
+// Prod.
+// const char* BACKEND_URL = "taller3-backend.herokuapp.com";
+// const int BACKEND_PORT = 80;
+
+// Dev.
+const char* BACKEND_URL = "192.168.0.189";
+const int BACKEND_PORT = 5000;
+
+const char* NETWORK = "";
+const char* NETWORK_PASS = "";
+
+const char* TASKS_ENDPOINT = "/devices/tasks/argon";
+const char* CONTENT_LENGTH_HEADER = "Content-Length";
+
+const int PAYLOAD_BUF_SIZE = 2048;
+
 SerialLogHandler logHandler;
 TCPClient client;
 
-const char* BACKEND_URL = "taller3-backend.herokuapp.com";
-const char* TASKS_ENDPOINT = "/tasks/argon";
-const char* CONTENT_LENGTH_HEADER = "Content-Length";
-const int BACKEND_PORT = 80;
-
-char buf[150];
-bool waitingForResponse = false;
-
 void setup()
 {
-    WiFi.setCredentials("Fibertel WiFi881 2.4GHz", "00412403610");
+    WiFi.setCredentials(NETWORK, NETWORK_PASS);
 
     pinMode(A0, OUTPUT);
     pinMode(A5, INPUT_PULLDOWN);
@@ -27,7 +35,7 @@ void heartBeatLight()
     delay(100);
 }
 
-String parseHeader(TCPClient c)
+String nextHeader(TCPClient c)
 {
     String header;
     uint8_t charRead = '\0';
@@ -41,57 +49,37 @@ String parseHeader(TCPClient c)
     return header;
 }
 
-void parseResponse(TCPClient c)
+void processPayload(String p)
 {
+    /**
+     *  Example payload:
+     *  {
+     *    'tasks': [
+     *      {'id': 3, 'task_name': 'task', 'task_params': null },
+     *      {'id': 7, 'task_name': 'test', 'task_params': { 'field': 'value' } }
+     *    ]
+     *  }
+     */
 
-    int payloadLength = 0;
-    uint8_t payloadbuf[250];
-
-    for (int i = 0; i < 250; i++)
-        payloadbuf[i] = 0;
-
-    // Parse headers
-    for (;;)
-    {
-        String header = parseHeader(c);
-
-        if (!header.length())
-            break;
-
-        if (header.startsWith(CONTENT_LENGTH_HEADER))
-        {
-            String value = header.substring(header.indexOf(':') + 1);
-            value.trim();
-
-            Log.info(value);
-
-            payloadLength = value.toInt();
-        }
-    }
-
-    c.read(payloadbuf, payloadLength);
-
-    // `payloadlenght` is taking in account the final \n.
-    String payload((const char *)payloadbuf, payloadLength - 1);
-
-    Log.info(payload);
-
-    JSONObjectIterator tasks(JSONValue::parseCopy(payload));
+    JSONObjectIterator tasks(JSONValue::parseCopy(p));
 
     while (tasks.next())
     {
         JSONArrayIterator tasks_i(tasks.value());
-
+        
         while (tasks_i.next())
         {
             JSONObjectIterator task_attrs(tasks_i.value());
 
             while (task_attrs.next())
             {
-                if (task_attrs.name() == "name")
+                // Regular attrs.
+
+                if (task_attrs.name() == "task_name")
                 {
                     Log.info("Value = %s", (const char *)task_attrs.value().toString().data());
-                    if (strcmp(task_attrs.value().toString().data(), "led_on") == 0)
+
+                    if (task_attrs.value().toString() == "led_on")
                     {
                         digitalWrite(A0, HIGH);
                     }
@@ -100,49 +88,107 @@ void parseResponse(TCPClient c)
                         digitalWrite(A0, LOW);
                     }
                 }
+                
+                // Extra params.
+
+                if (task_attrs.name() == "task_params")
+                {
+
+                    JSONObjectIterator task_extra_params(task_attrs.value());
+
+                    while (task_extra_params.next()) {
+
+                        Log.info(
+                            "Extra param: %s = %s", 
+                            (const char *)task_extra_params.name(),
+                            (const char *)task_extra_params.value().toString().data()
+                        );
+                    }
+               }
             }
         }
     }
 }
 
+void processResponse(TCPClient c)
+{
+    int payloadLength = 0;
+
+    // Parse headers
+    for (;;)
+    {
+        String h = nextHeader(c);
+
+        // If we reached end of headers just break.
+        if (!h.length()) break;
+
+        if (h.startsWith(CONTENT_LENGTH_HEADER))
+        {
+            String value = h.substring(h.indexOf(':') + 1);
+
+            Log.info("Content length: " + value);
+
+            value.trim();
+
+            // `payloadlength` is taking in account the final '\n'.
+            payloadLength = value.toInt() - 1;
+        }
+    }
+
+    uint8_t payloadbuf[PAYLOAD_BUF_SIZE];
+    
+    // Initialize the array.
+    for (int i = 0; i < PAYLOAD_BUF_SIZE; i++)
+        payloadbuf[i] = 0;
+
+    int bytesRead = 0;
+    while ((bytesRead += c.read(&payloadbuf[bytesRead], payloadLength)) < payloadLength);
+
+    payloadbuf[payloadLength] = '\0';
+    
+    String payload((const char *)payloadbuf);
+
+    Log.info("Captured payload with length: %d", payload.length());
+    
+    processPayload(payload);
+}
+
+bool connected = false;
+
+void sendTaskRequest(TCPClient c) 
+{
+    String request;
+    
+    request = request + String("GET ") + String(TASKS_ENDPOINT) + String(" HTTP/1.1\n");
+    request = request + String("Host: ") + String(BACKEND_URL);
+    request = request + String("Content-Length: 0");
+
+    client.println(request.c_str());
+    client.println();
+}
+
 void loop()
 {
-    // char headerbuf[50];
+    if (!connected) {
+        if(client.connect(BACKEND_URL, BACKEND_PORT)) {
+            Log.info("Connected to %s", BACKEND_URL);
+            connected = true;
+        }
+        
+        sendTaskRequest(client);
+    }
 
-    // if (!waitingForResponse && client.connect(BACKEND_URL, BACKEND_PORT))
-    // {
-    //     Log.info("Connected to: %s", BACKEND_URL);
+    if (connected && client.available()) 
+        processResponse(client);
 
-    //     snprintf(headerbuf, sizeof headerbuf, "GET %s HTTP/1.1", TASKS_ENDPOINT);
-    //     client.println(headerbuf);
-
-    //     snprintf(headerbuf, sizeof headerbuf, "Host: %s", BACKEND_URL);
-    //     client.println(headerbuf);
-
-    //     client.println("Content-Length: 0");
-    //     client.println();
-
-    //     waitingForResponse = true;
-    // }
-
-    // if (client.available()) {
-    //     Log.info("Parsing response...");
-    //     parseResponse(client);
-    //     waitingForResponse = false;
-    // }
-
-    // if (!client.connected())
-    //     client.stop();
-
-    // if (waitingForResponse) return;
-
-    // delay(7000);
+    if (connected && !client.connected()) {
+        client.stop();
+        connected = false;
+    }
 
     // System.sleep(D1, RISING, 10);
 
-    delay(500);
-
-    Log.info("Awake");
+    delay(1500);
 
     double acum = 0;
 
