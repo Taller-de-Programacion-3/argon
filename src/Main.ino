@@ -1,21 +1,24 @@
 #include <stdio.h>
+#include <iostream>
+#include <string>
+
 
 // Prod.
-// const char* BACKEND_URL = "taller3-backend.herokuapp.com";
-// const int BACKEND_PORT = 80;
+const char* BACKEND_URL = "taller3-backend.herokuapp.com";
+const int BACKEND_PORT = 80;
 
 // Dev.
-const char *BACKEND_URL = "192.168.0.189";
-const int BACKEND_PORT = 5000;
+// const char *BACKEND_URL = "192.168.0.189";
+// const int BACKEND_PORT = 5000;
 
-const char *NETWORK = "Fibertel WiFi881 2.4GHz";
-const char *NETWORK_PASS = "00412403610";
+const char *NETWORK = "mynetwork";
+const char *NETWORK_PASS = "xxx";
 
 const char *TASKS_ENDPOINT = "/devices/tasks/argon";
 const char *CONTENT_LENGTH_HEADER = "Content-Length";
 
-const char *LED_ON_TASK = "led_on";
-const char *LED_OFF_TASK = "led_off";
+const char *LED_ON_TASK = "Led On";
+const char *LED_OFF_TASK = "Led Off";
 
 const int PAYLOAD_BUF_SIZE = 2048;
 
@@ -23,6 +26,7 @@ struct Result
 {
     String taskID;
     String value;
+    boolean isFloat;
 };
 
 SerialLogHandler logHandler;
@@ -115,13 +119,18 @@ void processPayload(String p)
             {
                 Log.info("Turning ON led");
                 digitalWrite(A0, HIGH);
-                pendingResults.push_back(Result{taskID : id, value : "ok"});
+                pendingResults.push_back(Result{taskID : id, value : "ok", isFloat: false});
             }
             else if (task_name == LED_OFF_TASK)
             {
                 Log.info("Turning OFF led");
                 digitalWrite(A0, LOW);
-                pendingResults.push_back(Result{taskID : id, value : "ok"});
+                pendingResults.push_back(Result{taskID : id, value : "ok", isFloat: false});
+            }
+            else if (task_name == "Sense")
+            {
+                Log.info("Sensing....");
+                pendingResults.push_back(Result{taskID : id, value : String(measure()), isFloat: true});
             }
             else
             {
@@ -181,7 +190,7 @@ String buildRequest(String method, String url, String path, String payload)
 {
     String r;
 
-    r = r + method + String(" ") + String(path) + String(" HTTP/1.1\r\n");
+    r = r + method + String(" ") + String(path) + String(" HTTP/1.0\r\n");
     r = r + String("Host: ") + String(url) + String("\r\n");
     r = r + String("Content-Length: ") + payload.length() + String("\r\n");
     r = r + (method == String("POST")? String("Content-Type: application/json\r\n") : String());
@@ -212,8 +221,12 @@ String buildResultResponse()
     for (Result r : pendingResults)
     {
         writer.beginObject();
-        writer.name("id").value(r.taskID);
-        writer.name("value").value(r.value);
+        writer.name("id").value(std::stoi(r.taskID.c_str()));
+
+        if (false && r.isFloat)
+            writer.name("value").value(std::stof(r.value.c_str()));
+        else
+            writer.name("value").value(r.value);
 
         writer.endObject();
     }
@@ -244,7 +257,7 @@ double measure()
     return acum;
 }
 
-void askForTasks() 
+void askForTasks()
 {
     if (!connected && client.connect(BACKEND_URL, BACKEND_PORT))
     {
@@ -274,8 +287,8 @@ void askForTasks()
     }
 }
 
-void sendTaskResults() 
-{ 
+void sendTaskResults()
+{
     if (!pendingResults.size()) {
         firstCompleted = false;
         return;
@@ -294,7 +307,7 @@ void sendTaskResults()
 
         client.println(response.c_str());
     }
-    
+
     if (!connected) return;
 
     if (client.available())
